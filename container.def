@@ -1,0 +1,43 @@
+BootStrap: docker
+From: nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+%files
+    ./requirements.txt /home/requirements.txt
+
+%post
+    # packages
+    apt-get update
+    # mujoco
+    apt-get install -y libglfw3 libglew-dev libgl1-mesa-glx libosmesa6  # libnvidia-egl-wayland1
+    # opencv
+    apt-get install -y libglib2.0-0 libxext6  
+    # python
+    apt-get install -y python3 python3-pip
+    # general
+    apt-get install -y build-essential git
+
+    # python
+    python3 -m pip install --no-cache-dir torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121
+    python3 -m pip install --no-cache-dir -r /home/requirements.txt
+
+    # cleanup
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    # see: https://pytorch.org/rl/reference/generated/knowledge_base/MUJOCO_INSTALLATION.html
+    export MUJOCO_GL=egl
+    export PYOPENGL_PLATFORM=egl
+
+%test
+    # test if everything is installed correctly and imports with issues work
+    python3 --version
+    python3 -c 'import torch; print(f"torch={torch.__version__}")'
+    python3 -c 'import mujoco; print(f"mujoco={mujoco.__version__}")'
+    python3 -c 'import cv2; print(f"cv2={cv2.__version__}")'
+
+%labels
+    Author Thomas Rupf
+    Version v0.0.1
+
+%help
+    Container that sets up the necessary environment for zero-shot-il-ot.

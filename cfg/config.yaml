@@ -1,0 +1,208 @@
+defaults:
+  - _self_
+
+hydra:
+  run:
+    dir: outputs/hydra/${now:%Y-%m-%d}_${now:%H-%M-%S}
+  sweep:
+    dir: outputs/hydra_multirun/${now:%Y-%m-%d}_${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    name: ${now:%Y-%m-%d}_${now:%H-%M-%S}
+    chdir: false
+
+debug: false
+
+name: test
+
+logger:
+  _target_: zilot.common.logger.WandbLogger
+
+metadata:
+  project: zilot
+  entity: null  # your wandb username
+  dir: ???
+  name: ${name}
+  tags: []
+  job_type: ${job}
+
+seed: 0
+device: ???
+
+job: train
+model_name: ???
+load_tag: null
+
+use_V: true
+use_gt_V: false
+available:
+  Pi: ???
+  R: ???
+  V: ???
+  Q: ???
+  Vg: ???
+  Vs: ???
+  Fwd: ???
+  Cls: ???
+  Dec: ???
+  DecG: ???
+
+# global planning kwargs
+num_iterations: 4
+horizon: 16
+population_size: 512
+num_elites: ???
+elite_ratio: 0.01
+
+cls_cfg:
+  _target_: zilot.common.objectives.Classifier
+  threshold: 5.0
+  method: V
+
+optimizer_cfg:
+  _target_: zilot.third_party.mbrl.trajectory_opt.ICEMOptimizer
+  num_iterations: ${num_iterations}
+  elite_ratio: ${elite_ratio}
+  population_size: ${population_size}
+  population_decay_factor: 1.0
+  colored_noise_exponent: 2.0
+  lower_bound: ???
+  upper_bound: ???
+  keep_elite_frac: 1.0
+  alpha: 0.1
+  device: ${device}
+
+gt_planner_success_threshold: ${goal_success_threshold}
+
+planners:
+  # baselines
+  pi: 
+    _target_: zilot.common.planning.Pi
+    cls_cfg: ${cls_cfg}
+  mpc:
+    _target_: zilot.common.planning.MPC
+    optimizer_cfg: ${optimizer_cfg}
+    objective_cfg: 
+      _target_: zilot.common.objectives.SequentialMyopicMPC
+      cls_cfg: ${cls_cfg}
+      kind: default
+  # ot
+  zilot:
+    _target_: zilot.common.planning.MPC
+    optimizer_cfg: ${optimizer_cfg}
+    objective_cfg:
+      _target_: zilot.common.objectives.ZILOT
+      eps: 0.02
+      iters: 500
+      tau_a: 1.0
+      tau_b: 1.0
+  zilot_h:
+    _target_: zilot.common.planning.MPC
+    optimizer_cfg: ${optimizer_cfg}
+    objective_cfg:
+      _target_: zilot.common.objectives.ZILOTh
+      eps: 0.02
+      iters: 500
+      tau_a: 1.0
+      tau_b: 1.0
+  zilot_cls:
+    _target_: zilot.common.planning.MPC
+    optimizer_cfg: ${optimizer_cfg}
+    objective_cfg:
+      _target_: zilot.common.objectives.ZILOTCls
+      cls_cfg: ${cls_cfg}
+      eps: 0.02
+      iters: 500
+      tau_a: 1.0
+      tau_b: 1.0
+  zilot_uu:
+    _target_: zilot.common.planning.MPC
+    optimizer_cfg: ${optimizer_cfg}
+    objective_cfg:
+      _target_: zilot.common.objectives.ZILOT
+      eps: 0.02
+      iters: 500
+      tau_a: 1.0
+      tau_b: 0.5
+
+env_task: ???  # one kw to specify both env and task for grid search interplay
+
+planner: ???
+task: goal
+
+# env
+train: ???
+env: ???
+dset: null
+discount: ???
+value_scale: ???
+obs: ???
+goal: ???
+obs_shape: ???
+goal_shape: ???
+action_dim: ???
+goal_success_threshold: ???
+eval_metric: ???
+max_episode_length: ???
+step_size: ???
+
+# training
+steps: 1_000_000
+lr: 3e-4
+weight_decay: 0.0
+batch_size: 256
+n_steps: 3
+rho: 0.5
+grad_clip_norm: 20
+p_curr: 0.2  # marco value .2
+p_rand: 0.2
+p_future: ???  # marco value .5
+# critic
+enc_lr_scale: 0.3
+value_coef: 0.1
+reward_coef: 0.1
+consistency_coef: 20
+tau: 0.01
+# actor
+log_std_min: -10
+log_std_max: 2
+entropy_coef: 1e-4
+
+seed_steps: 1000  # td-mpc2 default = max(1000, 5*ep_len)
+freeze_scale_at: 50_000
+
+# logging
+log_dset_freq: null
+log_freq: 25
+val_freq: 5_000
+rollout_freq: 25_000
+log_model_freq: null
+val_n_steps: 8
+val_n: 10_000
+log_rollout_video_freq: 5000
+num_rollouts: ???
+draw_plans: false
+record_traj: false
+render: ???
+zip_logs: false
+
+# architecture
+# 2-hot encodings
+num_bins: 101
+bin_size: ???
+vmin: -10
+vmax: 10
+# model
+num_enc_layers: 2
+enc_dim: 256
+num_channels: 32
+mlp_dim: 512
+latent_dim: 512
+bin_dim: 12
+num_q: 5
+num_fwd: 5
+dropout: 0.01
+simnorm_dim: 8
+
+# deprecated
+load_model: null
