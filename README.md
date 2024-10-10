@@ -41,7 +41,7 @@ source .venv/bin/activate
 ```
 
 ## AWGCSL Data
-Download the contents of the `hard_task_1e6` data from [AWGCSL](https://github.com/yangrui2015/awgcsl) from [here](https://drive.google.com/drive/folders/1Gr8vgfCjHXgIXhlKvzCajQgqvBivPQJr?usp=drive_link) and the contents to `data/awgcsl/*` (the paths should be `data/awgcsl/<expert|random>/<env>/buffer.pkl`).
+Download the contents of the `hard_task_1e6` data from [AWGCSL](https://github.com/yangrui2015/awgcsl) [here](https://drive.google.com/drive/folders/1Gr8vgfCjHXgIXhlKvzCajQgqvBivPQJr?usp=drive_link) and copy the contents to `data/awgcsl/*` (the paths should be `data/awgcsl/<expert|random>/<env>/buffer.pkl`).
 
 # Running the experiments
 ## W&B
