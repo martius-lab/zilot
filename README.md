@@ -2,8 +2,7 @@
 
 This is the code release for the paper **Zero-Shot Imitation Learning via Optimal Transport**.
 - [Webpage](https://sites.google.com/view/zsilot)
-- ArXiv
-- [OpenReview](https://openreview.net/forum?id=vDecbmWf6w&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DICLR.cc%2F2025%2FConference%2FAuthors%23your-submissions))
+- [ArXiv](https://arxiv.org/abs/2410.08751)
 
 ![ZILOT](figures/overview.png)
 
@@ -17,9 +16,14 @@ The resulting method can learn from offline, suboptimal data, and is capable of 
 
 ## Citation
 ```
-@inproceedings{zilot,
-  title={Zero-Shot Imitation Learning via Optimal Transport},
-  TODO
+@misc{rupf2024zeroshotofflineimitationlearning,
+      title={Zero-Shot Offline Imitation Learning via Optimal Transport}, 
+      author={Thomas Rupf and Marco Bagatella and Nico Gürtler and Jonas Frey and Georg Martius},
+      year={2024},
+      eprint={2410.08751},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2410.08751}, 
 }
 ```
 
