@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import wandb
 from matplotlib.figure import Figure
 from omegaconf import Container, OmegaConf
 
+import wandb
 import zilot.utils.dict_util as du
 from zilot.model import Model
 
@@ -142,6 +142,8 @@ class WandbLogger(Logger):
         s = f"{self.cfg.env}-{self.cfg.seed}"
         if not OmegaConf.is_missing(self.cfg, "model_name") and self.cfg.model_name is not None:
             s = f"{self.cfg.model_name}-" + s
+        if self.cfg.model == "fb":
+            s = f"fb-{s}"
         return s
 
     def log_model(self, model: Model, **kwargs) -> str:
@@ -152,6 +154,7 @@ class WandbLogger(Logger):
         os.makedirs(os.path.dirname(fp), exist_ok=True)
         torch.save(state_dict, fp)
         wandb.log_model(fp, name=self._wandb_model_name)
+        print(f"Logged model {self._wandb_model_name} ({name})")
         return self._wandb_model_name
 
     def load_model(self, model: Model, name: str = None, tag: str = None):
@@ -160,6 +163,7 @@ class WandbLogger(Logger):
         fp = wandb.use_model(f"{name}:{tag}")
         state_dict = torch.load(fp, map_location=model.device)
         model.load_state_dict(state_dict)
+        print(f"Loaded model {name}:{tag} ({os.path.basename(fp)})")
 
     @property
     def _wandb_dset_name(self) -> str:

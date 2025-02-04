@@ -13,7 +13,6 @@ class Model(abc.ABC):
 
     """ TRAINING """
 
-    @abc.abstractmethod
     def update(self, batch: ty.Batch) -> Dict[str, Any]:
         pass
 
@@ -108,13 +107,30 @@ class Model(abc.ABC):
 
 # setup model
 from zilot.model.curious import Dynamics
+from zilot.model.fb import FBWrapper
 from zilot.model.tdmpc2 import TDMPC2Model
 
-JOB_TO_MODEL = {"train": TDMPC2Model, "eval": TDMPC2Model, "dset": Dynamics}
+JOB_TO_MODEL = {
+    "train": TDMPC2Model,
+    "eval": TDMPC2Model,
+    "dset": Dynamics,
+}
 
 
 def make_model(cfg: Container) -> Model:
-    model: Model = JOB_TO_MODEL[cfg.job](cfg)
+    if cfg.job == "dset":
+        model = Dynamics(cfg)
+    else:
+        if cfg.model == "tdmpc2":
+            model = TDMPC2Model(cfg)
+        elif cfg.model == "fb":
+            cfg.n_steps = 1  # FB trains on single-transition batches
+            # custom fb hyperparams
+            cfg.discount = 0.99 if "pointmaze" in cfg.env else (0.98 if "halfcheetah" in cfg.env else 0.95)
+            cfg.batch_size = 1024 if "pointmaze" in cfg.env else 2048
+            model = FBWrapper(cfg)
+        else:
+            raise ValueError(f"Unknown model: {cfg.model}")
     # set availability in config
     for k in cfg.available.keys():
         cfg.available[k] = model._provides.get(k, False)

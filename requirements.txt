@@ -29,3 +29,4 @@ gymnasium-robotics==1.2.4
 einops==0.7.0
 minari==0.4.3
 zarr==2.18.2
+dm-control==1.0.8

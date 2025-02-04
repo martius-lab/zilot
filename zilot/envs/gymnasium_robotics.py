@@ -275,7 +275,48 @@ class MujocoFetchSlideLargeEnv(MujocoFetchEnv, EzPickle):
         EzPickle.__init__(self, reward_type=reward_type, **kwargs)
 
 
+class MujocoFetchPickAndPlaceLargeEnv(MujocoFetchEnv, EzPickle):
+    """Fetch Pick and Place Env with large table and goal space of FetchPush."""
+
+    def __init__(self, reward_type="sparse", **kwargs):
+        model_path = os.path.realpath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "gymnasium_robotics_assets",
+                "fetch",
+                "pick_and_place_large.xml",
+            )
+        )
+        initial_qpos = {
+            "robot0:slide0": 0.405,
+            "robot0:slide1": 0.48,
+            "robot0:slide2": 0.0,
+            "object0:joint": [1.25, 0.53, 0.4, 1.0, 0.0, 0.0, 0.0],
+        }
+        MujocoFetchEnv.__init__(
+            self,
+            model_path=model_path,
+            has_object=True,
+            block_gripper=False,
+            n_substeps=20,
+            gripper_extra_height=0.2,
+            target_in_the_air=True,
+            target_offset=0.0,
+            obj_range=0.15,
+            target_range=0.15,
+            distance_threshold=0.05,
+            initial_qpos=initial_qpos,
+            reward_type=reward_type,
+            default_camera_config=DEFAULT_CAMERA_CONFIG,
+            **kwargs,
+        )
+        EzPickle.__init__(self, reward_type=reward_type, **kwargs)
+
+
 gym.register("FetchSlideLarge-v0", entry_point=MujocoFetchSlideLargeEnv, max_episode_steps=50)
+gym.register("FetchPickAndPlaceLarge-v0", entry_point=MujocoFetchPickAndPlaceLargeEnv, max_episode_steps=50)
 
 fetch_kwargs = {
     "goal_success_threshold": 0.05,
@@ -300,6 +341,36 @@ ENVS = {
             "discount": 0.995,
             "step_size": 0.05203704163432121,
             "horizon": 64,  # NOTE: since pointmaze has such a small dt, we 4x horizon
+        },
+    },
+    "antmaze_medium": {
+        "name": "AntMaze_Medium_Diverse_GR-v4",
+        "kwargs": {
+            "reset_target": True,
+            "continuing_task": False,
+        },
+        "wrapper": MazeEnvWrapper,
+        "cfg_changes": {
+            "goal_success_threshold": 0.45,  # as used in gymnasium_robotics MazeEnv.compute_terminated
+            "eval_metric": "${tf:l2_norm}",
+            "max_episode_length": 1000,
+            "discount": 0.999,
+            "step_size": 0.1,  # TODO: what is the max step size in maze?
+        },
+    },
+    "antmaze_open": {
+        "name": "AntMaze_Open_Diverse_GR-v4",
+        "kwargs": {
+            "reset_target": True,
+            "continuing_task": False,
+        },
+        "wrapper": MazeEnvWrapper,
+        "cfg_changes": {
+            "goal_success_threshold": 0.45,  # as used in gymnasium_robotics MazeEnv.compute_terminated
+            "eval_metric": "${tf:l2_norm}",
+            "max_episode_length": 700,
+            "discount": 0.9975,
+            "step_size": 0.1,  # TODO: what is the max step size in maze?
         },
     },
     "fetch_reach": {
@@ -330,9 +401,23 @@ ENVS = {
             **fetch_kwargs,
         },
     },
+    "fetch_slide_large": {
+        "name": "FetchSlideLarge-v0",
+        "wrapper": FetchEnvWrapper,
+        "cfg_changes": {
+            **fetch_kwargs,
+        },
+    },
     "fetch_slide_large_2D": {
         "name": "FetchSlideLarge-v0",
         "wrapper": partial(FetchEnvWrapper, slide_only=True),
+        "cfg_changes": {
+            **fetch_kwargs,
+        },
+    },
+    "fetch_pick_and_place_large": {
+        "name": "FetchPickAndPlaceLarge-v0",
+        "wrapper": FetchEnvWrapper,
         "cfg_changes": {
             **fetch_kwargs,
         },
@@ -342,16 +427,22 @@ ENVS = {
 
 GOAL_TRANSFORMS = {
     "pointmaze_medium": lambda x: x[..., :2],
+    "antmaze_medium": lambda x: x[..., 1:3],
+    "antmaze_open": lambda x: x[..., 1:3],
     "fetch_reach": lambda x: x[..., :3],
     "fetch_push": lambda x: x[..., 3:6],
     "fetch_slide": lambda x: x[..., 3:6],
     "fetch_pick_and_place": lambda x: x[..., 3:6],
+    "fetch_slide_large": lambda x: x[..., 3:6],
     "fetch_slide_large_2D": lambda x: x[..., 3:6],
+    "fetch_pick_and_place_large": lambda x: x[..., 3:6],
 }
 
 
 DSETS = {
     "pointmaze_medium": {"minari": ("pointmaze-medium-v2",)},
+    "antmaze_open": {},
+    "antmaze_medium": {"minari": ("antmaze-medium-diverse-v1",)},
     "fetch_push": {
         "awgcsl-all": ("FetchPush", "all"),
         "awgcsl-random": ("FetchPush", "random"),
@@ -367,7 +458,9 @@ DSETS = {
         "awgcsl-random": ("FetchPick", "random"),
         "awgcsl-expert": ("FetchPick", "expert"),
     },
+    "fetch_side_large": {},
     "fetch_side_large_2D": {},
+    "fetch_pick_and_place_large": {},
 }
 
 

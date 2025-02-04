@@ -6,13 +6,13 @@ from omegaconf import Container, OmegaConf
 
 
 def _set_debug_defaults(cfg: Container) -> Container:
-    cfg.steps = 10_000
+    cfg.steps = 1000
     cfg.seed_steps = 5
     cfg.log_freq = 1
     cfg.val_n = 64
     cfg.val_n_steps = cfg.n_steps
-    cfg.val_freq = 1250 if cfg.val_freq is not None else None
-    cfg.rollout_freq = 2500 if cfg.rollout_freq is not None else None
+    cfg.val_freq = 5 if cfg.val_freq is not None else None
+    cfg.rollout_freq = 5 if cfg.rollout_freq is not None else None
     cfg.num_rollouts = 2
     cfg.log_model_freq = None  # do not create model checkpoints
     cfg.log_dset_freq = None  # do not log dataset
@@ -54,7 +54,9 @@ def parse_cfg(cfg: Container) -> Container:
         cfg.setdefault("num_rollouts", 5)
         cfg.setdefault("render", True)
     if cfg.job == "train":
-        cfg.setdefault("planner", ["pi", "mpc", "gt_gt_mpc"])
+        cfg.setdefault(
+            "planner", ["pi", "mpc", "gt_gt_mpc"] if cfg.model == "tdmpc2" else ["fb_goal", "fb_er", "fb_rer"]
+        )
         cfg.setdefault("train", "offline")
         if cfg.log_model_freq is None:
             cfg.log_model_freq = cfg.steps
@@ -74,7 +76,8 @@ def parse_cfg(cfg: Container) -> Container:
     extra_tags = ["debug"] if cfg.debug else []
     extra_tags.append(f"seed={cfg.seed}")
     extra_tags.append(cfg.env)
-    extra_tags.extend([cfg.planner] if isinstance(cfg.planner, str) else [])
+    if not OmegaConf.is_missing(cfg, "planner") and isinstance(cfg.planner, str):
+        extra_tags.append(cfg.planner)
     extra_tags.extend([cfg.task] if isinstance(cfg.task, str) else [])
     extra_tags.extend(cfg.name.split("-"))
     extra_tags = [re.sub("[^0-9a-zA-Z]+", "-", tag) for tag in extra_tags if isinstance(tag, str) and len(tag) > 0]

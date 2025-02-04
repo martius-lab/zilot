@@ -87,7 +87,7 @@ def offline(cfg: Container, model: Model, env: Env, logger: Logger) -> None:
                 metrics["val"] = {"dset": val_metrics, "random": val_metrics_random}
 
             if rollout:
-                eval_metrics = evaluate(cfg, model, env)
+                eval_metrics = evaluate(cfg, model, env, step=i)
                 metrics["eval"] = eval_metrics
 
             if log:
@@ -217,7 +217,7 @@ def online(cfg: Container, model: Model, env: Env, logger: Logger) -> None:
                     metrics["val"] = {"dset": val_metrics, "random": val_metrics_random}
 
                 if roll:
-                    eval_metrics = evaluate(cfg, model, env)
+                    eval_metrics = evaluate(cfg, model, env, step=i_update)
                     metrics["eval"] = eval_metrics
 
                 if log:

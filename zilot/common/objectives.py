@@ -64,6 +64,14 @@ class Objective(abc.ABC):
 
 # ===== Classic MPC ===================================================================================================
 
+best_mpc_cls_cfg_thresholds = {
+    "fetch_pick_and_place": 5,
+    "fetch_push": 5,
+    "fetch_slide_large_2D": 5,
+    "halfcheetah": 5,
+    "pointmaze_medium": 5,
+}
+
 
 class SequentialMyopicMPC(Objective):
     _needs = ["V", "Fwd"]
@@ -71,6 +79,10 @@ class SequentialMyopicMPC(Objective):
     def __init__(self, cfg: Container, model: Model, cls_cfg: Container, kind: str):
         self.cfg = cfg
         self.model = model
+        if cfg.use_best_threshold:
+            threshold = best_mpc_cls_cfg_thresholds[cfg.env]
+            cls_cfg.threshold = threshold
+            print(f"Using best threshold for {cfg.env}: {threshold}")
         self.cls = hydra.utils.instantiate(cls_cfg, cfg=cfg, model=model, _recursive_=False)
         self._needs.extend(self.cls._needs)
         if kind == "default_cls":
@@ -120,6 +132,18 @@ class SequentialMyopicMPC(Objective):
             )
         return value, log
 
+    def _uniform(self, zs: ty.Latent, zg: ty.GLatent):
+        B = zs.size(0)
+        v = self.model.V(zs, zg)
+        mask = (~self.cls(zs, zg).cummax(dim=-1).values).float()
+        weights = mask / mask.sum(dim=-1, keepdim=True)  # coupling is product measure of uniform
+        v = v * weights
+        value = v.sum(dim=-1)
+        log = dict()
+        if self.cfg.draw_plans:
+            log["plan"] = dict(zs=zs, zgs=zg.expand(B, 1, -1), coupling=weights.unsqueeze(-1), weights=v.unsqueeze(-1))
+        return value, log
+
     def __call__(self, a: ty.Action):
         zs = rollout_fwd_z0(self.model.Fwd, self.z, a)
         zg = self.zg[self.idx]
@@ -127,6 +151,8 @@ class SequentialMyopicMPC(Objective):
             return self._default(zs, zg)
         elif self.kind == "default_cls":
             return self._default_cls(zs, zg)
+        elif self.kind == "uniform":
+            return self._uniform(zs, zg)
         else:
             raise ValueError(f"Invalid kind: {self.kind}")
 
@@ -306,6 +332,48 @@ class ZILOTCls(Objective):
         if self.cfg.draw_plans:
             log["plan"] = dict(
                 zs=prepend(self.s, f, dim=1), zgs=self.g[g_mask].expand(c.size(0), -1, -1), coupling=pi, weights=c
+            )
+        if self.cfg.record_traj:
+            log["traj"] = f
+        return cost.neg(), log
+
+
+class ZILOTbasic(Objective):
+    _needs = ["Fwd", "V"]
+
+    def __init__(
+        self,
+        cfg: Container,
+        model: Model,
+        **ot_kwargs,
+    ):
+        self.cfg = cfg
+        self.model = model
+        self.ot_kwargs = ot_kwargs
+
+    def reset(self, g: ty.GLatent):
+        assert g.dim() == 2
+        self.g = g
+        self.s = torch.empty((0, g.shape[1]), device=g.device, dtype=g.dtype)
+        self.v = torch.empty((0, g.shape[0]), device=g.device, dtype=g.dtype)
+
+    def step(self, s: ty.Latent):
+        self.s = append_single(self.s, s)
+        self.v = append_single(self.v, self.model.V(s, self.g))
+
+    def __call__(self, act: ty.Action) -> tuple[torch.Tensor, dict]:
+        f = rollout_fwd(self.model.Fwd, self.s[-1], act)
+        v_fg = self.model.V(f[..., None, :], self.g)  # [B H T]
+        c = prepend(self.v, v_fg, dim=1).neg().clamp_min(0.0)  # [B reach T]
+        # make invariant to T_max and remove outliers that slow convergence
+        c.mul_((1.0 / self.cfg.value_scale)).clamp_(0.0, 1.0)
+        a = torch.ones_like(c[:, :, 0]) / c.size(1)
+        b = torch.ones_like(c[:, 0, :]) / c.size(2)
+        cost, pi = ot_util.sinkhorn_log_unbalanced(a, b, c, **self.ot_kwargs)
+        log = dict()
+        if self.cfg.draw_plans:
+            log["plan"] = dict(
+                zs=prepend(self.s, f, dim=1), zgs=self.g.expand(c.size(0), -1, -1), coupling=pi, weights=c
             )
         if self.cfg.record_traj:
             log["traj"] = f

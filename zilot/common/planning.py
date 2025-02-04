@@ -1,4 +1,5 @@
 import abc
+import math
 
 import hydra
 import torch
@@ -116,12 +117,24 @@ class MPC(LatentPlanner):
 
 # ===== Myopic Pi =====================================================================================================
 
+best_pi_cls_cfg_thresholds = {
+    "fetch_pick_and_place": 5,
+    "fetch_push": 4,
+    "fetch_slide_large_2D": 5,
+    "halfcheetah": 4,
+    "pointmaze_medium": 5,
+}
+
 
 class Pi(LatentPlanner):
     compatible_tasks: list[TaskSpec] = [TaskSpec.SINGLE]
     _needs = ["Pi"]
 
     def __init__(self, cfg: Container, model: Model, cls_cfg: Container):
+        if cfg.use_best_threshold:
+            threshold = best_pi_cls_cfg_thresholds[cfg.env]
+            cls_cfg.threshold = threshold
+            print(f"Using best threshold for {cfg.env}: {threshold}")
         self.cls: torch.nn.Module = hydra.utils.instantiate(cls_cfg, cfg=cfg, model=model, _recursive_=False)
         self._needs.extend(self.cls._needs)
         super().__init__(cfg, model)
@@ -181,13 +194,278 @@ class Planner:
         return task_spec in self.planner.compatible_tasks
 
 
+class GTPi:
+    """
+    Myopic policy with ground-truth success metric
+    """
+
+    def __init__(self, cfg: Container, model: Model, threshold: float = None):
+        self.cfg = cfg
+        self.model = model
+        self.threshold = float(threshold or cfg.goal_success_threshold)
+
+    @torch.inference_mode()
+    def reset(self, task: ty.Goal) -> None:
+        self.goals = task
+        self.goal_idx = 0
+
+    def gt_cls(self, g1, g2):
+        return self.cfg.eval_metric(g1, g2) <= self.threshold
+
+    @torch.inference_mode()
+    def plan(self, obs: dict[str, ty.Obs]) -> ty.Action:
+        obs_as_goal = obs["achieved_goal"]
+        obs = obs["observation"]
+        while self.goal_idx + 1 < len(self.goals) and self.gt_cls(obs_as_goal, self.goals[self.goal_idx]):
+            self.goal_idx += 1
+        goal = self.goals[self.goal_idx]
+        device_in = obs.device
+        nobs = self.model.preproc_obs(obs)
+        ngoal = self.model.preproc_goal(goal)
+        z = self.model.Enc(nobs)
+        zg = self.model.EncG(ngoal)
+        x = self.model.Pi(z, zg)[0]
+        x = self.model.postproc_action(x)
+        return x.to(device_in), dict()
+
+    def is_compatible(self, task_spec: TaskSpec):
+        return task_spec == TaskSpec.SINGLE
+
+
+class GTMPC:
+    """
+    Myopic MPC with ground-truth success metric for classification AND as objective
+    """
+
+    def __init__(self, cfg: Container, model: Model, threshold: float = None):
+        self.cfg = cfg
+        self.model = model
+        self.optimizer: TrajectoryOptimizer = make_optimizer(cfg.optimizer_cfg, cfg=cfg)
+
+        # NOTE: we assume the below info is not available to our model, but use it here as a baseline
+        self.threshold = threshold or cfg.goal_success_threshold
+        self.goal_tf = GOAL_TRANSFORMS[self.cfg.env]
+
+    @torch.inference_mode()
+    def reset(self, task: ty.Goal) -> None:
+        self.goals = task
+        self.goal_idx = 0
+        self.optimizer.reset()
+        self.model.reset()
+
+    def gt_cls(self, g1, g2):
+        return self.cfg.eval_metric(g1, g2) <= self.threshold
+
+    @torch.inference_mode()
+    def plan(self, obs: dict[str, ty.Obs]) -> ty.Action:
+        obs_as_goal = obs["achieved_goal"]
+        obs = obs["observation"]
+        while self.goal_idx + 1 < len(self.goals) and self.gt_cls(obs_as_goal, self.goals[self.goal_idx]):
+            self.goal_idx += 1
+        goal = self.goals[self.goal_idx]
+        device_in = obs.device
+        nobs = self.model.preproc_obs(obs)
+        ngoal = self.model.preproc_goal(goal)
+        z = self.model.Enc(nobs)
+        zg = self.model.EncG(ngoal)
+
+        def objective(a):
+            zs = rollout_fwd(self.model.Fwd, z.clone(), a)
+            B, H, _ = zs.size()
+            s = self.model.Dec(zs)
+            s_as_goal = self.goal_tf(s)
+            v = -torch.ones(B, H, device=zs.device)
+            v[:, -1] = self.model.V(z, zg)
+            mask = ~self.gt_cls(s_as_goal, ngoal).cummax(dim=-1).values  # once done stay done
+            return (v * mask.float()).sum(dim=-1)
+
+        a = self.optimizer.optimize(objective)
+        x = a[0]
+        x = self.model.postproc_action(x)
+        return x.to(device_in), dict()
+
+    def is_compatible(self, task_spec: TaskSpec):
+        return task_spec == TaskSpec.SINGLE
+
+
+class GTGTMPC:
+    """
+    Myopic MPC with ground-truth success metric for classification AND as objective
+    """
+
+    def __init__(self, cfg: Container, model: Model, threshold: float = None):
+        self.cfg = cfg
+        self.model = model
+        self.optimizer: TrajectoryOptimizer = make_optimizer(cfg.optimizer_cfg, cfg=cfg)
+
+        # NOTE: we assume the below info is not available to our model, but use it here as a baseline
+        self.threshold = threshold or cfg.goal_success_threshold
+        self.goal_tf = GOAL_TRANSFORMS[self.cfg.env]
+
+    @torch.inference_mode()
+    def reset(self, task: ty.Goal) -> None:
+        self.goals = task
+        self.goal_idx = 0
+        self.optimizer.reset()
+        self.model.reset()
+
+    def gt_cls(self, g1, g2):
+        return self.cfg.eval_metric(g1, g2) <= self.threshold
+
+    @torch.inference_mode()
+    def plan(self, obs: dict[str, ty.Obs]) -> ty.Action:
+        obs_as_goal = obs["achieved_goal"]
+        obs = obs["observation"]
+        while self.goal_idx + 1 < len(self.goals) and self.gt_cls(obs_as_goal, self.goals[self.goal_idx]):
+            self.goal_idx += 1
+        goal = self.goals[self.goal_idx]
+        device_in = obs.device
+        nobs = self.model.preproc_obs(obs)
+        ngoal = self.model.preproc_goal(goal)
+        z = self.model.Enc(nobs)
+
+        def objective(a):
+            zs = rollout_fwd(self.model.Fwd, z.clone(), a)
+            B, H, _ = zs.size()
+            s = self.model.Dec(zs)
+            s_as_goal = self.goal_tf(s)
+            v = -self.cfg.eval_metric(s_as_goal[:, -1], ngoal) / self.cfg.step_size
+            rewards = torch.cat([-torch.ones(B, H - 1, device=zs.device), v.unsqueeze(-1)], dim=-1)
+            mask = ~self.gt_cls(s_as_goal, ngoal).cummax(dim=-1).values  # once done stay done
+            return (rewards * mask).sum(dim=-1)
+
+        a = self.optimizer.optimize(objective)
+        x = a[0]
+        x = self.model.postproc_action(x)
+        return x.to(device_in), dict()
+
+    def is_compatible(self, task_spec: TaskSpec):
+        return task_spec == TaskSpec.SINGLE
+
+
+# =====================================================================================================================
+# FB-IL
+# =====================================================================================================================
+
+
+class FB_ER:
+    def __init__(self, cfg, model) -> None:
+        self.cfg = cfg
+        self.agent = model.agent
+
+    @torch.inference_mode()
+    def _get_z_from_goals(self, goals: torch.Tensor):
+        goals = goals.to(self.cfg.device)
+        assert goals.ndim == 2, "Expected goals to be 2D"
+        # https://openreview.net/pdf?id=SHNjk4h0jn eq. 8
+        # 1/l * sum_{t >= 0} B(goal_{t+1}) * r(goal_{t+1}), where r(goal) = 1
+        # in maze and in fetch, the very first state is a goal,
+        # so we have to exclude it since eq. 8 only summs from s_1, ...
+        # for cheetah we don't have this problem since the initial state is not a goal
+        if len(goals) > 1 and ("maze" in self.cfg.env or "fetch" in self.cfg.env):
+            goals = goals[1:]
+        zs = self.agent.backward_net(goals)
+        z = zs.mean(dim=0)  # 1/l * sum ...
+        if self.agent.cfg.norm_z:
+            z = math.sqrt(z.size(-1)) * torch.nn.functional.normalize(z, dim=-1)
+        return z
+
+    @torch.inference_mode()
+    def reset(self, task: ty.Goal) -> None:
+        self._z = self._get_z_from_goals(task.to(self.cfg.device))
+
+    @torch.inference_mode()
+    def plan(self, obs: dict[str, ty.Obs]) -> ty.Action:
+        obs = obs["observation"].to(self.cfg.device)
+        a = self.agent.act(obs.unsqueeze(0), self._z.unsqueeze(0), eval_mode=True).squeeze(0)
+        return a, dict()
+
+    def is_compatible(self, task_spec):
+        return task_spec == TaskSpec.SINGLE
+
+
+class FB_RER:
+    def __init__(self, cfg, model) -> None:
+        self.cfg = cfg
+        self.agent = model.agent
+
+    @torch.inference_mode()
+    def _get_z_from_goals(self, goals: torch.Tensor):
+        goals = goals.to(self.cfg.device)
+        assert goals.ndim == 2, "Expected goals to be 2D"
+        # https://openreview.net/pdf?id=SHNjk4h0jn eq. 8
+        # 1/l * sum_{t >= 0} B(goal_{t+1}) * r(goal_{t+1}), where r(goal) = 1
+        # in maze and in fetch, the very first state is a goal,
+        # so we have to exclude it since eq. 8 only summs from s_1, ...
+        # for cheetah we don't have this problem since the initial state is not a goal
+        if len(goals) > 1 and ("maze" in self.cfg.env or "fetch" in self.cfg.env):
+            goals = goals[1:]
+        covB = self.agent.online_cov(None)
+        B = self.agent.backward_net(goals)
+        EBBT = torch.einsum("ni,nj->nij", B, B).mean(dim=0)
+        EB = B.mean(dim=0)  # 1/l * sum ...
+        z = torch.einsum("ki,ij,j->k", covB, (covB + EBBT).inverse(), EB)
+        if self.agent.cfg.norm_z:
+            z = math.sqrt(z.size(-1)) * torch.nn.functional.normalize(z, dim=-1)
+        return z
+
+    @torch.inference_mode()
+    def reset(self, task: ty.Goal) -> None:
+        self._z = self._get_z_from_goals(task.to(self.cfg.device))
+
+    @torch.inference_mode()
+    def plan(self, obs: dict[str, ty.Obs]) -> ty.Action:
+        obs = obs["observation"].to(self.cfg.device)
+        a = self.agent.act(obs.unsqueeze(0), self._z.unsqueeze(0), eval_mode=True).squeeze(0)
+        return a, dict()
+
+    def is_compatible(self, task_spec):
+        return task_spec == TaskSpec.SINGLE
+
+
+class FB_Goal:
+    def __init__(self, cfg: Container, model: Model, threshold: float = None) -> None:
+        self.cfg = cfg
+        self.agent = model.agent
+        self.threshold = float(threshold or cfg.goal_success_threshold)
+
+    @torch.inference_mode()
+    def reset(self, task: ty.Goal) -> None:
+        self.goals = task.to(self.cfg.device)
+        self.goal_idx = 0
+
+    def gt_cls(self, g1, g2):
+        return self.cfg.eval_metric(g1, g2) <= self.threshold
+
+    @torch.inference_mode()
+    def plan(self, obs: dict[str, ty.Obs]) -> ty.Action:
+        obs = obs.to(self.cfg.device)
+        obs_as_goal = obs["achieved_goal"]
+        while self.goal_idx + 1 < len(self.goals) and self.gt_cls(obs_as_goal, self.goals[self.goal_idx]):
+            self.goal_idx += 1
+        goal = self.goals[self.goal_idx]
+
+        z = self.agent.backward_net(goal.unsqueeze(0).to(self.cfg.device))
+
+        obs = obs["observation"]
+        a = self.agent.act(obs.unsqueeze(0), z, eval_mode=True).squeeze(0)
+        return a, dict()
+
+    def is_compatible(self, task_spec):
+        return task_spec == TaskSpec.SINGLE
+
+
 # =====================================================================================================================
 # Utils
 # =====================================================================================================================
 
+NO_WRAP = ["gt_pi", "gt_mpc", "gt_gt_mpc", "fb_goal", "fb_er", "fb_rer"]
+
 
 def make_planner_from_model(name, cfg: Container, model: Model) -> Planner:
     spec = cfg.planners[name]
+    if name in NO_WRAP:
+        return hydra.utils.instantiate(spec, cfg=cfg, model=model, _recursive_=False)
     planner: LatentPlanner = hydra.utils.instantiate(spec, cfg=cfg, model=model, _recursive_=False)
     return Planner(model, planner)
 

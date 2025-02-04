@@ -9,6 +9,7 @@ from omegaconf import Container, ListConfig
 from tqdm.auto import tqdm
 from zarr.storage import DirectoryStore
 
+import wandb
 import zilot.utils.dict_util as du
 import zilot.utils.stat_util as su
 from zilot.common.planning import Planner, make_planner_from_model
@@ -19,7 +20,7 @@ from zilot.utils.collector_util import EpCollector, collect, zarr_to_dict
 from zilot.utils.img_util import cat_videos
 from zilot.utils.seed_util import set_seed
 
-# from zsilot.utils.plan_vis_util import render_plans
+# from zilot.utils.plan_vis_util import render_plans
 
 
 def _merge(*dicts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -41,7 +42,7 @@ def eval_task_planner(
     planner: Planner,
     num_episodes: int,
     video_tag: str = "",
-) -> dict[int, str]:
+) -> None:
     # Register non-strict keys for plans
     for plan_key in ["points_a", "points_b", "coupling", "weights"]:
         col.register_key("plan/" + plan_key, strict=False)
@@ -92,9 +93,28 @@ def _cat_vids(**kwargs):
     return cat_videos(*[np.concatenate(v[:n]) for v in vids])
 
 
-def evaluate(cfg: Container, model: Model, env: Env, log_all: bool = False) -> dict[str, Any]:
+ENV_TASK = {
+    "pointmaze_medium": ["goal", "path-sparse", "path-dense", "circle-sparse", "circle-dense"],
+    "halfcheetah": [
+        "frontflip",
+        "frontflip-running",
+        "hop-forward",
+        "hop-backward",
+        "backflip",
+        "backflip-running",
+        "run-forward",
+        "run-backward",
+        "goal",
+    ],
+    "fetch_slide_large_2D": ["S-dense", "S-sparse", "L-dense", "L-sparse", "U-dense", "U-sparse", "goal"],
+    "fetch_push": ["S-dense", "S-sparse", "L-dense", "L-sparse", "U-dense", "U-sparse", "goal"],
+    "fetch_pick_and_place": ["S-dense", "S-sparse", "L-dense", "L-sparse", "U-dense", "U-sparse", "goal"],
+}
+
+
+def evaluate(cfg: Container, model: Model, env: Env, log_all: bool = False, step=None) -> dict[str, Any]:
     planners = cfg.planner if isinstance(cfg.planner, ListConfig) else [cfg.planner]
-    tasks = cfg.task if isinstance(cfg.task, ListConfig) else [cfg.task]
+    tasks = cfg.task if isinstance(cfg.task, ListConfig) else ([cfg.task] if cfg.task != "all" else ENV_TASK[cfg.env])
     evaluations = [(t, p) for t in tasks for p in planners]
 
     is_multi_eval = len(evaluations) > 1
@@ -142,8 +162,6 @@ def evaluate(cfg: Container, model: Model, env: Env, log_all: bool = False) -> d
         )
 
         if log_all and not is_multi_eval:
-            import wandb
-
             if cfg.zip_logs:  # no need to compress, just archive
                 fd, arch_loc = tempfile.mkstemp(suffix=".tar", dir=scratch_dir)
                 os.close(fd)
@@ -165,24 +183,23 @@ def evaluate(cfg: Container, model: Model, env: Env, log_all: bool = False) -> d
         else:
             results = metrics
 
-    if is_multi_eval:  # average planner performance over tasks
-        avg_planner_results = {}
-        for t, v in results.items():
-            for p, x in v.items():
-                avg_planner_results.setdefault(p, {}).setdefault(t, x)
-        is_single_planner = len(avg_planner_results) == 1
-        for p, v in avg_planner_results.items():
-            x = su.stack_nested_dict(v)
-            x = su.aggregate(
-                x,
-                sr=su.Agg("mean", "sr"),
-                W1=su.Agg("mean", "W1"),
-                goal_frac=su.Agg("mean", "goal_frac"),
-                ep_reward=su.Agg("mean", "ep_reward"),
+    fd, table = tempfile.mkstemp(suffix=".csv", dir=scratch_dir)
+    os.close(fd)
+    with open(table, "w") as f:
+        f.write("env,task,planner,seed,sr,last,W1,gidx,goal_frac,ep_reward\n")
+        if is_multi_eval:
+            for t, d in results.items():
+                for p, m in d.items():
+                    f.write(
+                        f"{cfg.env},{t},{p},{cfg.seed},{m['sr']},{m['last']},{m['W1']},{m['gidx']},{m['goal_frac']},{m['ep_reward']}\n"  # noqa
+                    )
+        else:
+            f.write(
+                f"{cfg.env},{cfg.task},{cfg.planner},{cfg.seed},{results['sr']},{results['last']},{results['W1']},{results['gidx']},{results['goal_frac']},{results['ep_reward']}\n"  # noqa
             )
-            if is_single_planner:
-                results["avg"] = x
-            else:
-                results.setdefault("avg", {})[p] = x
+    table_name = "eval_table" + (f"_{step}" if step is not None else "")
+    art = wandb.Artifact(name=table_name, type="eval_table")
+    art.add_file(table)
+    wandb.log_artifact(art)
 
     return results

@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-OmegaConf.register_new_resolver("tf", lambda x: hydra.utils.get_method("zsilot.utils.tf_util." + x))
+OmegaConf.register_new_resolver("tf", lambda x: hydra.utils.get_method("zilot.utils.tf_util." + x))
 
 
 def l2_norm(x, y):
