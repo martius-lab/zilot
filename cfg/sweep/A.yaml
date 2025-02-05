@@ -1,0 +1,62 @@
+program: main.py
+name: final_A
+method: grid
+metric:
+  goal: minimize
+  name: eval.W1
+parameters:  # see: https://docs.wandb.ai/guides/sweeps/sweep-config-keys
+  env_task:
+    values:
+      - fetch_slide_large_2D-S-dense
+      - fetch_slide_large_2D-S-sparse
+      - fetch_slide_large_2D-L-dense
+      - fetch_slide_large_2D-L-sparse
+      - fetch_slide_large_2D-U-dense
+      - fetch_slide_large_2D-U-sparse
+      - fetch_slide_large_2D-goal
+      - fetch_pick_and_place-S-dense
+      - fetch_pick_and_place-S-sparse
+      - fetch_pick_and_place-L-dense
+      - fetch_pick_and_place-L-sparse
+      - fetch_pick_and_place-U-dense
+      - fetch_pick_and_place-U-sparse
+      - fetch_pick_and_place-goal
+      - fetch_push-S-dense
+      - fetch_push-S-sparse
+      - fetch_push-L-dense
+      - fetch_push-L-sparse
+      - fetch_push-U-dense
+      - fetch_push-U-sparse
+      - fetch_push-goal
+      - halfcheetah-frontflip
+      - halfcheetah-frontflip-running
+      - halfcheetah-hop-forward
+      - halfcheetah-hop-backward
+      - halfcheetah-backflip
+      - halfcheetah-backflip-running
+      - halfcheetah-run-forward
+      - halfcheetah-run-backward
+      - halfcheetah-goal
+      - pointmaze_medium-path-dense
+      - pointmaze_medium-path-sparse
+      - pointmaze_medium-circle-dense
+      - pointmaze_medium-circle-sparse
+      - pointmaze_medium-goal
+  planner:
+    values: 
+    - zilot
+    - zilot_h
+  seed:
+    values: [0, 1, 2, 3, 4]
+command:
+  - python3
+  - ${program}
+  - job=eval
+  - 'name=final-${env}-${task}-${planner}-${seed}'
+  - num_rollouts=20
+  - ${args_no_hyphens}
+  # just to be sure
+  - use_V=True
+  - render=False
+  - draw_plans=False
+  - record_traj=False
